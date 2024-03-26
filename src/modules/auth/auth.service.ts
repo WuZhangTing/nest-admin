@@ -1,13 +1,14 @@
 import { InjectRedis } from '@liaoliaots/nestjs-redis'
-import { Injectable } from '@nestjs/common'
+import { Inject, Injectable } from '@nestjs/common'
 
 import Redis from 'ioredis'
 import { isEmpty } from 'lodash'
 
 import { BusinessException } from '~/common/exceptions/biz.exception'
 
+import { AppConfig, IAppConfig, ISecurityConfig, SecurityConfig } from '~/config'
 import { ErrorEnum } from '~/constants/error-code.constant'
-import { genAuthPVKey, genAuthPermKey, genAuthTokenKey } from '~/helper/genRedisKey'
+import { genAuthPVKey, genAuthPermKey, genAuthTokenKey, genTokenBlacklistKey } from '~/helper/genRedisKey'
 
 import { UserService } from '~/modules/user/user.service'
 
@@ -28,6 +29,8 @@ export class AuthService {
     private userService: UserService,
     private loginLogService: LoginLogService,
     private tokenService: TokenService,
+    @Inject(SecurityConfig.KEY) private securityConfig: ISecurityConfig,
+    @Inject(AppConfig.KEY) private appConfig: IAppConfig,
   ) {}
 
   async validateUser(credential: string, password: string): Promise<any> {
@@ -73,7 +76,7 @@ export class AuthService {
     // 包含access_token和refresh_token
     const token = await this.tokenService.generateAccessToken(user.id, roles)
 
-    await this.redis.set(genAuthTokenKey(user.id), token.accessToken)
+    await this.redis.set(genAuthTokenKey(user.id), token.accessToken, 'EX', this.securityConfig.jwtExprire)
 
     // 设置密码版本号 当密码修改时，版本号+1
     await this.redis.set(genAuthPVKey(user.id), 1)
@@ -102,11 +105,6 @@ export class AuthService {
     await this.loginLogService.create(uid, ip, ua)
   }
 
-  async logout(uid: number) {
-    // 删除token
-    await this.userService.forbidden(uid)
-  }
-
   /**
    * 重置密码
    */
@@ -119,14 +117,19 @@ export class AuthService {
   /**
    * 清除登录状态信息
    */
-  async clearLoginStatus(uid: number): Promise<void> {
-    await this.userService.forbidden(uid)
+  async clearLoginStatus(user: IAuthUser, accessToken: string): Promise<void> {
+    const exp = user.exp ? (user.exp - Date.now() / 1000).toFixed(0) : this.securityConfig.jwtExprire
+    await this.redis.set(genTokenBlacklistKey(accessToken), accessToken, 'EX', exp)
+    if (this.appConfig.multiDeviceLogin)
+      await this.tokenService.removeAccessToken(accessToken)
+    else
+      await this.userService.forbidden(user.uid, accessToken)
   }
 
   /**
    * 获取菜单列表
    */
-  async getMenus(uid: number): Promise<string[]> {
+  async getMenus(uid: number) {
     return this.menuService.getMenus(uid)
   }
 

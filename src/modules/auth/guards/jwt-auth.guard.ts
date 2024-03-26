@@ -1,15 +1,22 @@
+import { InjectRedis } from '@liaoliaots/nestjs-redis'
 import {
   ExecutionContext,
+  Inject,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
 import { AuthGuard } from '@nestjs/passport'
 import { FastifyRequest } from 'fastify'
+import Redis from 'ioredis'
 import { isEmpty, isNil } from 'lodash'
 
+import { ExtractJwt } from 'passport-jwt'
+
 import { BusinessException } from '~/common/exceptions/biz.exception'
+import { AppConfig, IAppConfig } from '~/config'
 import { ErrorEnum } from '~/constants/error-code.constant'
+import { genTokenBlacklistKey } from '~/helper/genRedisKey'
 import { AuthService } from '~/modules/auth/auth.service'
 
 import { checkIsDemoMode } from '~/utils'
@@ -20,10 +27,14 @@ import { TokenService } from '../services/token.service'
 // https://docs.nestjs.com/recipes/passport#implement-protected-route-and-jwt-strategy-guards
 @Injectable()
 export class JwtAuthGuard extends AuthGuard(AuthStrategy.JWT) {
+  jwtFromRequestFn = ExtractJwt.fromAuthHeaderAsBearerToken()
+
   constructor(
     private reflector: Reflector,
     private authService: AuthService,
     private tokenService: TokenService,
+    @InjectRedis() private readonly redis: Redis,
+    @Inject(AppConfig.KEY) private appConfig: IAppConfig,
   ) {
     super()
   }
@@ -42,33 +53,43 @@ export class JwtAuthGuard extends AuthGuard(AuthStrategy.JWT) {
 
     const isSse = request.headers.accept === 'text/event-stream'
 
-    if (isSse && !request.headers.authorization?.startsWith('Bearer')) {
+    if (isSse && !request.headers.authorization?.startsWith('Bearer ')) {
       const { token } = request.query as Record<string, string>
       if (token)
         request.headers.authorization = `Bearer ${token}`
     }
 
-    const Authorization = request.headers.authorization
+    const token = this.jwtFromRequestFn(request)
+
+    // 检查 token 是否在黑名单中
+    if (await this.redis.get(genTokenBlacklistKey(token)))
+      throw new BusinessException(ErrorEnum.INVALID_LOGIN)
+
+    request.accessToken = token
 
     let result: any = false
     try {
       result = await super.canActivate(context)
     }
-    catch (e) {
+    catch (err) {
       // 需要后置判断 这样携带了 token 的用户就能够解析到 request.user
       if (isPublic)
         return true
 
-      if (isEmpty(Authorization))
+      if (isEmpty(token))
         throw new UnauthorizedException('未登录')
 
-      // 判断 token 是否存在, 如果不存在则认证失败
-      const accessToken = isNil(Authorization)
-        ? undefined
-        : await this.tokenService.checkAccessToken(Authorization!)
+      // 在 handleRequest 中 user 为 null 时会抛出 UnauthorizedException
+      if (err instanceof UnauthorizedException)
+        throw new BusinessException(ErrorEnum.INVALID_LOGIN)
 
-      if (!accessToken)
-        throw new UnauthorizedException('令牌无效')
+      // 判断 token 是否有效且存在, 如果不存在则认证失败
+      const isValid = isNil(token)
+        ? undefined
+        : await this.tokenService.checkAccessToken(token!)
+
+      if (!isValid)
+        throw new BusinessException(ErrorEnum.INVALID_LOGIN)
     }
 
     // SSE 请求
@@ -86,11 +107,14 @@ export class JwtAuthGuard extends AuthGuard(AuthStrategy.JWT) {
     }
 
     // 不允许多端登录
-    // const cacheToken = await this.authService.getTokenByUid(request.user.uid);
-    // if (Authorization !== cacheToken) {
-    //   // 与redis保存不一致 即二次登录
-    //   throw new ApiException(ErrorEnum.CODE_1106);
-    // }
+    if (!this.appConfig.multiDeviceLogin) {
+      const cacheToken = await this.authService.getTokenByUid(request.user.uid)
+
+      if (token !== cacheToken) {
+        // 与redis保存不一致 即二次登录
+        throw new BusinessException(ErrorEnum.ACCOUNT_LOGGED_IN_ELSEWHERE)
+      }
+    }
 
     return result
   }

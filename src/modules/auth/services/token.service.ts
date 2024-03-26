@@ -1,8 +1,12 @@
+import { InjectRedis } from '@liaoliaots/nestjs-redis'
 import { Inject, Injectable } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import dayjs from 'dayjs'
 
+import Redis from 'ioredis'
+
 import { ISecurityConfig, SecurityConfig } from '~/config'
+import { genOnlineUserKey } from '~/helper/genRedisKey'
 import { RoleService } from '~/modules/system/role/role.service'
 import { UserEntity } from '~/modules/user/user.entity'
 import { generateUUID } from '~/utils'
@@ -18,13 +22,13 @@ export class TokenService {
   constructor(
     private jwtService: JwtService,
     private roleService: RoleService,
+    @InjectRedis() private redis: Redis,
     @Inject(SecurityConfig.KEY) private securityConfig: ISecurityConfig,
   ) {}
 
   /**
    * 根据accessToken刷新AccessToken与RefreshToken
-   * @param accessTokenSign
-   * @param response
+   * @param accessToken
    */
   async refreshToken(accessToken: AccessTokenEntity) {
     const { user, refreshToken } = accessToken
@@ -60,7 +64,7 @@ export class TokenService {
       roles,
     }
 
-    const jwtSign = this.jwtService.sign(payload)
+    const jwtSign = await this.jwtService.signAsync(payload)
 
     // 生成accessToken
     const accessToken = new AccessTokenEntity()
@@ -94,7 +98,7 @@ export class TokenService {
       uuid: generateUUID(),
     }
 
-    const refreshTokenSign = this.jwtService.sign(refreshTokenPayload, {
+    const refreshTokenSign = await this.jwtService.signAsync(refreshTokenPayload, {
       secret: this.securityConfig.refreshSecret,
     })
 
@@ -111,15 +115,23 @@ export class TokenService {
   }
 
   /**
-   * 检查accessToken是否存在
+   * 检查accessToken是否存在，并且是否处于有效期内
    * @param value
    */
   async checkAccessToken(value: string) {
-    return AccessTokenEntity.findOne({
-      where: { value },
-      relations: ['user', 'refreshToken'],
-      cache: true,
-    })
+    let isValid = false
+    try {
+      await this.verifyAccessToken(value)
+      const res = await AccessTokenEntity.findOne({
+        where: { value },
+        relations: ['user', 'refreshToken'],
+        cache: true,
+      })
+      isValid = Boolean(res)
+    }
+    catch (error) {}
+
+    return isValid
   }
 
   /**
@@ -130,8 +142,10 @@ export class TokenService {
     const accessToken = await AccessTokenEntity.findOne({
       where: { value },
     })
-    if (accessToken)
+    if (accessToken) {
+      this.redis.del(genOnlineUserKey(accessToken.id))
       await accessToken.remove()
+    }
   }
 
   /**
@@ -145,7 +159,8 @@ export class TokenService {
     })
     if (refreshToken) {
       if (refreshToken.accessToken)
-        await refreshToken.accessToken.remove()
+        this.redis.del(genOnlineUserKey(refreshToken.accessToken.id))
+      await refreshToken.accessToken.remove()
       await refreshToken.remove()
     }
   }
@@ -155,6 +170,6 @@ export class TokenService {
    * @param token
    */
   async verifyAccessToken(token: string): Promise<IAuthUser> {
-    return this.jwtService.verify(token)
+    return this.jwtService.verifyAsync(token)
   }
 }
