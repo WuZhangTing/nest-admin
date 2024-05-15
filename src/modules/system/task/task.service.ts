@@ -12,7 +12,7 @@ import { UnknownElementException } from '@nestjs/core/errors/exceptions/unknown-
 import { InjectRepository } from '@nestjs/typeorm'
 import { Queue } from 'bull'
 import Redis from 'ioredis'
-import { isEmpty } from 'lodash'
+import { isEmpty, isNil } from 'lodash'
 import { Like, Repository } from 'typeorm'
 
 import { BusinessException } from '~/common/exceptions/biz.exception'
@@ -103,7 +103,7 @@ export class TaskService implements OnModuleInit {
         ...(name ? { name: Like(`%${name}%`) } : null),
         ...(service ? { service: Like(`%${service}%`) } : null),
         ...(type ? { type } : null),
-        ...(status ? { status } : null),
+        ...(!isNil(status) ? { status } : null),
       })
       .orderBy('task.id', 'ASC')
 
@@ -247,6 +247,9 @@ export class TaskService implements OnModuleInit {
       .forEach(async (j) => {
         await j.remove()
       })
+
+    // 在队列中删除当前任务
+    await this.taskQueue.removeRepeatable(JSON.parse(task.jobOpts))
 
     await this.taskRepository.update(task.id, { status: TaskStatus.Disabled })
     // if (task.jobOpts) {

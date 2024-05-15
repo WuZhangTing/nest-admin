@@ -4,8 +4,9 @@
 # 使用 as 来为某一阶段命名
 FROM node:20-slim AS base
 
-ENV PROJECT_DIR=/nest-admin \
-    DB_HOST=mysql \
+ARG PROJECT_DIR
+
+ENV DB_HOST=mysql \
     APP_PORT=7001 \
     PNPM_HOME="/pnpm" \
     PATH="$PNPM_HOME:$PATH"
@@ -50,4 +51,4 @@ EXPOSE $APP_PORT
 # 容器启动时执行的命令，类似npm run start
 # CMD ["pnpm", "start:prod"]
 # CMD ["pm2-runtime", "ecosystem.config.js"]
-ENTRYPOINT ./wait-for-it.sh $DB_HOST:$DB_PORT -- pm2-runtime ecosystem.config.js
+ENTRYPOINT ./wait-for-it.sh $DB_HOST:$DB_PORT -- pnpm migration:run && pm2-runtime ecosystem.config.js
