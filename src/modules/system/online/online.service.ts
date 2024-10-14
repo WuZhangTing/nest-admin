@@ -1,10 +1,10 @@
-import { InjectRedis } from '@liaoliaots/nestjs-redis'
 import { Injectable } from '@nestjs/common'
-
 import Redis from 'ioredis'
 
 import { throttle } from 'lodash'
+
 import { UAParser } from 'ua-parser-js'
+import { InjectRedis } from '~/common/decorators/inject-redis.decorator'
 
 import { BusinessException } from '~/common/exceptions/biz.exception'
 import { ErrorEnum } from '~/constants/error-code.constant'
@@ -62,7 +62,7 @@ export class OnlineService {
       address,
       tokenId: token.id,
       uid: token.user.id,
-      deptName: token.user.dept.name,
+      deptName: token.user.dept?.name ?? '',
       os: `${`${uaResult.os.name ?? ''} `}${uaResult.os.version}`,
       browser: `${`${uaResult.browser.name ?? ''} `}${uaResult.browser.version}`,
       username: token.user.username,

@@ -1,4 +1,3 @@
-import { InjectRedis } from '@liaoliaots/nestjs-redis'
 import {
   ExecutionContext,
   Inject,
@@ -10,13 +9,15 @@ import { AuthGuard } from '@nestjs/passport'
 import { FastifyRequest } from 'fastify'
 import Redis from 'ioredis'
 import { isEmpty, isNil } from 'lodash'
-
 import { ExtractJwt } from 'passport-jwt'
 
+import { InjectRedis } from '~/common/decorators/inject-redis.decorator'
+
 import { BusinessException } from '~/common/exceptions/biz.exception'
-import { AppConfig, IAppConfig } from '~/config'
+import { AppConfig, IAppConfig, RouterWhiteList } from '~/config'
 import { ErrorEnum } from '~/constants/error-code.constant'
 import { genTokenBlacklistKey } from '~/helper/genRedisKey'
+
 import { AuthService } from '~/modules/auth/auth.service'
 
 import { checkIsDemoMode } from '~/utils'
@@ -56,7 +57,8 @@ export class JwtAuthGuard extends AuthGuard(AuthStrategy.JWT) {
     ])
     const request = context.switchToHttp().getRequest<FastifyRequest<RequestType>>()
     // const response = context.switchToHttp().getResponse<FastifyReply>()
-
+    if (RouterWhiteList.includes(request.routeOptions.url))
+      return true
     // TODO 此处代码的作用是判断如果在演示环境下，则拒绝用户的增删改操作，去掉此代码不影响正常的业务逻辑
     if (request.method !== 'GET' && !request.url.includes('/auth/login'))
       checkIsDemoMode()

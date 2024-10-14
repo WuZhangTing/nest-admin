@@ -17,13 +17,14 @@ export class AccountUpdateDto {
   nickname: string
 
   @ApiProperty({ description: '用户邮箱' })
+  @IsOptional()
   @IsEmail()
   email: string
 
   @ApiProperty({ description: '用户QQ' })
   @IsOptional()
   @IsString()
-  @Matches(/^[0-9]+$/)
+  @Matches(/^\d+$/)
   @MinLength(5)
   @MaxLength(11)
   qq: string
@@ -51,7 +52,7 @@ export class ResetPasswordDto {
 
   @ApiProperty({ description: '密码', example: 'a123456' })
   @IsString()
-  @Matches(/^\S*(?=\S{6,})(?=\S*\d)(?=\S*[A-Za-z])\S*$/)
+  @Matches(/^\S*(?=\S{6})(?=\S*\d)(?=\S*[A-Z])\S*$/i)
   @MinLength(6)
   password: string
 }
